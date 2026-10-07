@@ -58,7 +58,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-white text-slate-900 font-sans selection:bg-emerald-500 selection:text-white flex flex-col justify-between">
+    <div className={`bg-white text-slate-900 font-sans selection:bg-emerald-500 selection:text-white flex flex-col justify-between ${currentView === "workspace" ? "h-screen max-h-screen overflow-hidden" : "min-h-screen"}`}>
       {/* Top Banner Alert when account created */}
       {successBanner && (
         <div className="bg-emerald-600 text-white text-xs font-bold py-2.5 px-4 text-center sticky top-0 z-50 shadow-md flex items-center justify-center gap-2">
@@ -85,7 +85,7 @@ export default function Home() {
 
       {/* Conditional View: Dashboard Workspace vs Master Landing Page */}
       {currentView === "workspace" && activeAccount ? (
-        <main className="flex-1 w-full min-h-screen">
+        <main className="flex-1 w-full h-full min-h-0 overflow-hidden">
           <BusinessWorkspace
             key={activeAccount.id}
             account={activeAccount}

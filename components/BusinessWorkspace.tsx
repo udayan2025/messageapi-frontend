@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   LayoutDashboard, 
   Settings, 
@@ -43,7 +43,11 @@ import {
   Pause,
   Lock,
   CheckCheck,
-  Filter
+  Filter,
+  UserPlus,
+  X,
+  PanelLeftClose,
+  PanelLeftOpen
 } from "lucide-react";
 import { BusinessAccount, BusinessCategory, CatalogItem, ChatMessage } from "@/lib/types";
 import { updateBusinessAccount, generateSimulatedReply } from "@/lib/storage";
@@ -52,7 +56,7 @@ interface WorkspaceProps {
   account: BusinessAccount;
   onUpdateAccount: (updated: BusinessAccount) => void;
   onBackToLanding: () => void;
-  onOpenWizard: () => void;
+  onOpenWizard?: () => void;
 }
 
 let wsMessageCounter = 5000;
@@ -209,6 +213,7 @@ export default function BusinessWorkspace({
   onOpenWizard,
 }: WorkspaceProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>("dashboard");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [catalogSearch, setCatalogSearch] = useState("");
 
   const industry = INDUSTRY_CONFIGS[account.category] || INDUSTRY_CONFIGS.custom;
@@ -389,8 +394,98 @@ export default function BusinessWorkspace({
   const [isTyping, setIsTyping] = useState(false);
   const [aiAutoPilot, setAiAutoPilot] = useState(true);
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
+  const [emojiModalOpen, setEmojiModalOpen] = useState(false);
+  const [selectedEmojiCategory, setSelectedEmojiCategory] = useState<string>("all");
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+
+  // Chat Menu & Modals State
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [showChangeSessionModal, setShowChangeSessionModal] = useState(false);
+  const [showAddChatModal, setShowAddChatModal] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState("wa_primary_01");
+  const [selectedSessionToSwitch, setSelectedSessionToSwitch] = useState("wa_primary_01");
+  const [newContactName, setNewContactName] = useState("");
+  const [newContactPhone, setNewContactPhone] = useState("");
+  const [newContactTag, setNewContactTag] = useState("Active Inquiry");
+
+  const chatMessagesContainerRef = useRef<HTMLDivElement>(null);
+  const chatMessagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (activeTab === "chat") {
+      chatMessagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [activeTab, activeContactId, contacts, isTyping]);
+
+  // Handle Delete All Messages from all chats
+  const handleDeleteAllChats = () => {
+    setContacts((prev) =>
+      prev.map((c) => ({
+        ...c,
+        messages: [],
+        lastMessage: "No messages yet",
+        unreadCount: 0
+      }))
+    );
+    setShowDeleteAllModal(false);
+    setChatMenuOpen(false);
+  };
+
+  // Handle Add New Contact / Chat
+  const handleAddNewContact = () => {
+    if (!newContactName.trim() || !newContactPhone.trim()) return;
+    const newId = `c_${Date.now()}`;
+    const initials = newContactName
+      .trim()
+      .split(" ")
+      .map((w) => w[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2) || "U";
+
+    const colors = ["bg-emerald-600", "bg-teal-600", "bg-blue-600", "bg-purple-600", "bg-indigo-600", "bg-amber-600", "bg-rose-600"];
+    const randomBg = colors[Math.floor(Math.random() * colors.length)];
+
+    const newContact = {
+      id: newId,
+      name: newContactName.trim(),
+      phone: newContactPhone.trim(),
+      avatarBg: randomBg,
+      initials,
+      lastMessage: account.greetingMessage.replace("{BusinessName}", account.businessName),
+      lastTime: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      unreadCount: 0,
+      isOnline: true,
+      statusText: "online",
+      tag: newContactTag || "Active Inquiry",
+      messages: [
+        {
+          id: createWsMessageId("init"),
+          sender: "business" as const,
+          text: account.greetingMessage.replace("{BusinessName}", account.businessName),
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          isAiGenerated: true,
+          status: "read" as const
+        }
+      ]
+    };
+
+    setContacts((prev) => [newContact, ...prev]);
+    setActiveContactId(newId);
+    setNewContactName("");
+    setNewContactPhone("");
+    setShowAddChatModal(false);
+    setChatMenuOpen(false);
+  };
+
+  // Handle Switch WhatsApp Session
+  const handleSwitchSession = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setShowChangeSessionModal(false);
+    setChatMenuOpen(false);
+  };
 
   // Catalog State
   const [newProdName, setNewProdName] = useState("");
@@ -662,139 +757,194 @@ export default function BusinessWorkspace({
     item.sku.toLowerCase().includes(catalogSearch.toLowerCase())
   );
 
+  const navMenuItems = [
+    { id: "dashboard" as DashboardTab, label: "Dashboard", shortLabel: "Dash", icon: LayoutDashboard },
+    { id: "settings" as DashboardTab, label: "Settings", shortLabel: "Settings", icon: Settings },
+    { id: "webqr" as DashboardTab, label: "Message WebQR", shortLabel: "WebQR", icon: QrCode },
+    { id: "chat" as DashboardTab, label: "Live Chat & Messaging", shortLabel: "Chat", icon: MessageSquare },
+    { id: "session" as DashboardTab, label: "Sessions", shortLabel: "Sessions", icon: Key },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50/70 text-slate-800 flex flex-col md:flex-row font-sans selection:bg-teal-500 selection:text-white">
-      {/* PROFESSIONAL DASHBOARD SIDEBAR */}
-      <aside className="w-full md:w-64 bg-white border-r border-slate-200/90 flex flex-col justify-between flex-shrink-0 shadow-xs">
-        <div className="p-4 space-y-6">
-          {/* Store Brand / Industry Header */}
-          <div className="space-y-3 pb-4 border-b border-slate-200">
-            <div className="flex items-center gap-2.5">
-              <div className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${industry.themeColor} flex items-center justify-center text-white font-bold shadow-md shadow-teal-500/20 flex-shrink-0`}>
-                <IndustryIcon className="w-5 h-5" />
+    <div className="h-screen max-h-screen bg-slate-50/70 text-slate-800 flex flex-col md:flex-row font-sans selection:bg-teal-500 selection:text-white overflow-hidden">
+      {/* PROFESSIONAL DASHBOARD SIDEBAR (COLLAPSIBLE) */}
+      <aside
+        className={`w-full ${
+          isSidebarOpen ? "md:w-75" : "md:w-[74px]"
+        } bg-white border-r border-slate-200/90 flex flex-col justify-between flex-shrink-0 shadow-xs h-full overflow-y-auto transition-all duration-200`}
+      >
+        {isSidebarOpen ? (
+          /* EXPANDED / OPEN SIDEBAR */
+          <div className="p-4 space-y-6">
+            {/* Store Brand / Industry Header */}
+            <div className="space-y-3 pb-4 border-b border-slate-200">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 overflow-hidden">
+                  <div className={`w-10 h-10 rounded-[5px] bg-gradient-to-tr ${industry.themeColor} flex items-center justify-center text-white font-bold shadow-md shadow-teal-500/20 flex-shrink-0`}>
+                    <IndustryIcon className="w-5 h-5" />
+                  </div>
+                  <div className="overflow-hidden">
+                    <h3 className="text-sm font-black text-slate-900 truncate">{account.businessName}</h3>
+                    <span className="text-[10px] font-bold text-teal-600 block truncate">
+                      {account.categoryLabel}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Sidebar Close Button */}
+                <button
+                  onClick={() => setIsSidebarOpen(false)}
+                  title="Close Sidebar"
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-[5px] transition-colors cursor-pointer flex-shrink-0"
+                >
+                  <PanelLeftClose className="w-4 h-4" />
+                </button>
               </div>
-              <div className="overflow-hidden">
-                <h3 className="text-sm font-black text-slate-900 truncate">{account.businessName}</h3>
-                <span className="text-[10px] font-bold text-teal-600 block truncate">
-                  {account.categoryLabel}
+
+              {/* WhatsApp Live Status Pill */}
+              <div className="p-2 rounded-[5px] bg-emerald-50/80 border border-emerald-200 flex items-center justify-between text-[11px]">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="font-semibold text-emerald-900">Messageapp Web</span>
+                </div>
+                <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-[5px] font-bold border border-emerald-300">
+                  Connected
                 </span>
               </div>
             </div>
 
-            {/* WhatsApp Live Status Pill */}
-            <div className="p-2 rounded-xl bg-emerald-50/80 border border-emerald-200 flex items-center justify-between text-[11px]">
-              <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="font-semibold text-emerald-900">Messageapp Web</span>
-              </div>
-              <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold border border-emerald-300">
-                Connected
+            {/* SIDEBAR NAVIGATION MENU */}
+            <nav className="space-y-1.5">
+              <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider px-2 pb-1">
+                Menu Navigation
+              </p>
+
+              {navMenuItems.map((item) => {
+                const ItemIcon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    title={item.label}
+                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-[5px] text-xs font-bold transition-all cursor-pointer ${
+                      isActive
+                        ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white shadow-md shadow-teal-500/20 font-extrabold"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                    }`}
+                  >
+                    <ItemIcon className="w-4 h-4 flex-shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+        ) : (
+          /* COLLAPSED / CLOSED SIDEBAR */
+          <div className="p-2.5 space-y-3">
+            {/* Sidebar Open Button */}
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              title="Open Sidebar"
+              className="w-full flex items-center justify-center p-2 text-slate-600 hover:text-teal-700 hover:bg-teal-50 rounded-[5px] border border-slate-200/80 transition-all cursor-pointer shadow-2xs group"
+            >
+              <PanelLeftOpen className="w-4 h-4 text-teal-600 group-hover:scale-110 transition-transform" />
+            </button>
+
+            {/* Brand Logo Icon */}
+            <div
+              title={`${account.businessName} (${account.categoryLabel})`}
+              className={`w-10 h-10 mx-auto rounded-[5px] bg-gradient-to-tr ${industry.themeColor} flex items-center justify-center text-white font-bold shadow-md shadow-teal-500/20 cursor-default`}
+            >
+              <IndustryIcon className="w-5 h-5" />
+            </div>
+
+            {/* WhatsApp Live Status Compact Indicator */}
+            <div title="Messageapp Web: Connected" className="flex items-center justify-center py-1">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
             </div>
+
+            <div className="w-full h-px bg-slate-200 my-1" />
+
+            {/* Navigation Menu (Icons + Clear Short Labels + Tooltip) */}
+            <nav className="space-y-1.5">
+              {navMenuItems.map((item) => {
+                const ItemIcon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    title={item.label}
+                    className={`w-full flex flex-col items-center justify-center py-2 px-1 rounded-[5px] transition-all cursor-pointer group ${
+                      isActive
+                        ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white shadow-md shadow-teal-500/20 font-extrabold"
+                        : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                    }`}
+                  >
+                    <ItemIcon className="w-4 h-4 flex-shrink-0 group-hover:scale-110 transition-transform" />
+                    <span className="text-[9px] font-bold leading-tight mt-1 truncate max-w-full text-center">
+                      {item.shortLabel}
+                    </span>
+                  </button>
+                );
+              })}
+            </nav>
           </div>
-
-          {/* EXACT REQUIRED SIDEBAR NAVIGATION MENU */}
-          <nav className="space-y-1.5">
-            <p className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider px-2 pb-1">
-              Menu Navigation
-            </p>
-
-            {/* 1. Dashboard */}
-            <button
-              onClick={() => setActiveTab("dashboard")}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                activeTab === "dashboard"
-                  ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white shadow-md shadow-teal-500/20 font-extrabold"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4 flex-shrink-0" />
-              <span>Dashboard</span>
-            </button>
-
-            {/* 2. Settings */}
-            <button
-              onClick={() => setActiveTab("settings")}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                activeTab === "settings"
-                  ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white shadow-md shadow-teal-500/20 font-extrabold"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-              }`}
-            >
-              <Settings className="w-4 h-4 flex-shrink-0" />
-              <span>Settings</span>
-            </button>
-
-            {/* 3. Message WebQR */}
-            <button
-              onClick={() => setActiveTab("webqr")}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                activeTab === "webqr"
-                  ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white shadow-md shadow-teal-500/20 font-extrabold"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-              }`}
-            >
-              <QrCode className="w-4 h-4 flex-shrink-0" />
-              <span>Message WebQR</span>
-            </button>
-
-            {/* 4. Live Chat & Messaging */}
-            <button
-              onClick={() => setActiveTab("chat")}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                activeTab === "chat"
-                  ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white shadow-md shadow-teal-500/20 font-extrabold"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-              }`}
-            >
-              <MessageSquare className="w-4 h-4 flex-shrink-0" />
-              <span>Live Chat &amp; Messaging</span>
-            </button>
-
-            {/* 5. Sessions */}
-            <button
-              onClick={() => setActiveTab("session")}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                activeTab === "session"
-                  ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white shadow-md shadow-teal-500/20 font-extrabold"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-              }`}
-            >
-              <Key className="w-4 h-4 flex-shrink-0" />
-              <span>Sessions</span>
-            </button>
-          </nav>
-        </div>
+        )}
 
         {/* Sidebar Footer Quick Controls */}
-        <div className="p-4 border-t border-slate-200 space-y-2 bg-slate-50/80">
-          <button
-            onClick={onOpenWizard}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold transition-all shadow-xs"
-          >
-            <Plus className="w-3.5 h-3.5 text-teal-600" />
-            <span>Create New Business</span>
-          </button>
-
-          <button
-            onClick={onBackToLanding}
-            className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-slate-500 hover:text-slate-900 text-xs font-semibold hover:bg-slate-100 transition-all"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Landing Page</span>
-          </button>
-        </div>
+        {isSidebarOpen ? (
+          <div className="p-3 border-t border-slate-200 bg-slate-50/80 flex-shrink-0">
+            <button
+              onClick={onBackToLanding}
+              title="Landing Page"
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-[5px] text-slate-600 hover:text-slate-900 text-xs font-semibold hover:bg-slate-100 border border-slate-200 bg-white transition-all cursor-pointer shadow-xs"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-slate-500" />
+              <span>Landing Page</span>
+            </button>
+          </div>
+        ) : (
+          <div className="p-2 border-t border-slate-200 bg-slate-50/80 flex-shrink-0">
+            <button
+              onClick={onBackToLanding}
+              title="Back to Landing Page"
+              className="w-full flex flex-col items-center justify-center py-2 rounded-[5px] text-slate-600 hover:text-slate-900 text-xs font-semibold hover:bg-slate-100 border border-slate-200 bg-white transition-all cursor-pointer shadow-xs"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-slate-500" />
+              <span className="text-[9px] font-bold mt-0.5">Exit</span>
+            </button>
+          </div>
+        )}
       </aside>
 
       {/* MAIN DASHBOARD CONTENT AREA */}
-      <main className="flex-1 overflow-y-auto bg-slate-50/50 min-h-screen flex flex-col">
+      <main className="flex-1 bg-slate-50/50 h-full max-h-screen flex flex-col overflow-hidden min-w-0">
         {/* Top Header Bar */}
-        <header className="bg-white/95 backdrop-blur-md border-b border-slate-200/90 px-6 py-3.5 sticky top-0 z-30 flex flex-col lg:flex-row lg:items-center justify-between gap-3 shadow-xs">
-          {/* Business Info Badges: Owner, Phone & Working Hours */}
+        <header className="bg-white/95 backdrop-blur-md border-b border-slate-200/90 px-4 sm:px-6 py-3.5 sticky top-0 z-30 flex flex-col lg:flex-row lg:items-center justify-between gap-3 shadow-xs flex-shrink-0">
+          {/* Left: Sidebar Toggle + Business Info Badges */}
           <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Sidebar Open/Close Toggle Button */}
+            {/* <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              title={isSidebarOpen ? "Close Sidebar" : "Open Sidebar"}
+              className="p-2 rounded-[5px] bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 hover:text-slate-900 transition-all flex items-center justify-center shadow-2xs flex-shrink-0 cursor-pointer"
+            >
+              {isSidebarOpen ? (
+                <PanelLeftClose className="w-4 h-4 text-slate-600" />
+              ) : (
+                <PanelLeftOpen className="w-4 h-4 text-teal-600" />
+              )}
+            </button> */}
+
             {/* Owner Badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50/90 hover:bg-slate-100 border border-slate-200 text-xs shadow-2xs transition-all">
-              <div className="w-5 h-5 rounded-lg bg-teal-100/80 text-teal-700 flex items-center justify-center font-bold flex-shrink-0">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-[5px] bg-slate-50/90 hover:bg-slate-100 border border-slate-200 text-xs shadow-2xs transition-all">
+              <div className="w-5 h-5 rounded-[5px] bg-teal-100/80 text-teal-700 flex items-center justify-center font-bold flex-shrink-0">
                 <User className="w-3 h-3 text-teal-700" />
               </div>
               <div className="flex items-center gap-1.5">
@@ -804,8 +954,8 @@ export default function BusinessWorkspace({
             </div>
 
             {/* Phone Badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50/90 hover:bg-slate-100 border border-slate-200 text-xs shadow-2xs transition-all">
-              <div className="w-5 h-5 rounded-lg bg-emerald-100/80 text-emerald-700 flex items-center justify-center font-bold flex-shrink-0">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-[5px] bg-slate-50/90 hover:bg-slate-100 border border-slate-200 text-xs shadow-2xs transition-all">
+              <div className="w-5 h-5 rounded-[5px] bg-emerald-100/80 text-emerald-700 flex items-center justify-center font-bold flex-shrink-0">
                 <Phone className="w-3 h-3 text-emerald-700" />
               </div>
               <div className="flex items-center gap-1.5">
@@ -815,8 +965,8 @@ export default function BusinessWorkspace({
             </div>
 
             {/* Hours Badge */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50/90 hover:bg-slate-100 border border-slate-200 text-xs shadow-2xs transition-all">
-              <div className="w-5 h-5 rounded-lg bg-blue-100/80 text-blue-700 flex items-center justify-center font-bold flex-shrink-0">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-[5px] bg-slate-50/90 hover:bg-slate-100 border border-slate-200 text-xs shadow-2xs transition-all">
+              <div className="w-5 h-5 rounded-[5px] bg-blue-100/80 text-blue-700 flex items-center justify-center font-bold flex-shrink-0">
                 <Clock className="w-3 h-3 text-blue-700" />
               </div>
               <div className="flex items-center gap-1.5">
@@ -828,10 +978,9 @@ export default function BusinessWorkspace({
 
           {/* Header Quick Actions */}
           <div className="flex items-center gap-2 flex-shrink-0">
-           
             <button
               onClick={() => setActiveTab("chat")}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-teal-500/20 transition-all"
+              className="px-4 py-2 rounded-[5px] bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-teal-500/20 transition-all cursor-pointer"
             >
               <MessageSquare className="w-3.5 h-3.5" />
               <span>Live Test Bot</span>
@@ -840,7 +989,7 @@ export default function BusinessWorkspace({
         </header>
 
         {/* Dynamic Tab Body */}
-        <div className="p-6 sm:p-8 flex-1 max-w-12xl mx-auto w-full space-y-8">
+        <div className={`flex-1 min-h-0 w-full ${activeTab === "chat" ? "p-3 sm:p-5 flex flex-col overflow-hidden" : "overflow-y-auto p-6 sm:p-8 max-w-12xl mx-auto space-y-8"}`}>
           {/* TAB 1: DASHBOARD (Overview & Industry-Tailored Operations) */}
           {activeTab === "dashboard" && (
             <div className="space-y-8">
@@ -1193,9 +1342,9 @@ export default function BusinessWorkspace({
 
           {/* TAB 4: LIVE CHAT & MESSAGING (Authentic WhatsApp Web Interface & Complete Features) */}
           {activeTab === "chat" && (
-            <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xl overflow-hidden flex flex-col md:flex-row h-full">
+            <div className="bg-white rounded-md border border-slate-200/90 shadow-xl overflow-hidden flex flex-col md:flex-row h-full min-h-0 flex-1">
               {/* WhatsApp Left Sidebar: Contacts, Search & Filter Tabs */}
-              <div className="w-full md:w-80 lg:w-96 bg-white border-r border-slate-200 flex flex-col flex-shrink-0 h-full">
+              <div className="w-full md:w-80 lg:w-96 bg-white border-r border-slate-200 flex flex-col flex-shrink-0 h-full min-h-0">
                 {/* Contacts Header */}
                 <div className="p-3.5 bg-slate-100/80 border-b border-slate-200 flex items-center justify-between flex-shrink-0">
                   <div className="flex items-center gap-2.5">
@@ -1223,12 +1372,84 @@ export default function BusinessWorkspace({
                     >
                       {aiAutoPilot ? "AI Active" : "Manual"}
                     </button>
-                    <button className="p-1.5 hover:bg-slate-200/80 rounded-full transition-colors" title="Filter chats">
+                    {/* <button className="p-1.5 hover:bg-slate-200/80 rounded-full transition-colors" title="Filter chats">
                       <Filter className="w-4 h-4" />
-                    </button>
-                    <button className="p-1.5 hover:bg-slate-200/80 rounded-full transition-colors" title="Menu">
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
+                    </button> */}
+                    <div className="relative">
+                      <button 
+                        onClick={() => setChatMenuOpen(!chatMenuOpen)}
+                        className={`p-1.5 rounded-full transition-colors ${
+                          chatMenuOpen ? "bg-slate-200 text-slate-900" : "hover:bg-slate-200/80 text-slate-500"
+                        }`}
+                        title="Chat Menu"
+                      >
+                        <MoreVertical className="w-4 h-4" />
+                      </button>
+
+                      {/* Three Dots Dropdown Menu */}
+                      {chatMenuOpen && (
+                        <>
+                          <div 
+                            className="fixed inset-0 z-30" 
+                            onClick={() => setChatMenuOpen(false)} 
+                          />
+                          <div className="absolute right-0 top-8 w-56 bg-white rounded-[5px] shadow-xl border border-slate-200/90 p-1.5 z-40 space-y-1 animate-in fade-in slide-in-from-top-1">
+                            {/* 1. Add Chat */}
+                            <button
+                              onClick={() => {
+                                setChatMenuOpen(false);
+                                setShowAddChatModal(true);
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-slate-700 hover:text-teal-700 hover:bg-slate-50 rounded-[5px] transition-all text-left cursor-pointer group"
+                            >
+                              <div className="w-6 h-6 rounded-[5px] bg-teal-50 text-teal-600 flex items-center justify-center flex-shrink-0 group-hover:bg-teal-100 transition-colors">
+                                <UserPlus className="w-3.5 h-3.5" />
+                              </div>
+                              <span className="font-medium">Add New Chat</span>
+                            </button>
+
+                            {/* 2. Change Session */}
+                            <button
+                              onClick={() => {
+                                setChatMenuOpen(false);
+                                setSelectedSessionToSwitch(activeSessionId);
+                                setShowChangeSessionModal(true);
+                              }}
+                              className="w-full flex items-start gap-2.5 px-3 py-2 text-xs font-semibold text-slate-700 hover:text-teal-700 hover:bg-slate-50 rounded-[5px] transition-all text-left cursor-pointer group"
+                            >
+                              <div className="w-6 h-6 rounded-[5px] bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0 group-hover:bg-blue-100 transition-colors mt-0.5">
+                                <RefreshCw className="w-3.5 h-3.5" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <span className="font-medium text-slate-800 block">Change Session</span>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+                                  <span className="text-[10px] text-slate-500 truncate font-medium">
+                                    {sessions.find((s) => s.id === activeSessionId)?.name || "Primary WhatsApp"}
+                                  </span>
+                                </div>
+                              </div>
+                            </button>
+
+                            <div className="border-t border-slate-100 my-1" />
+
+                            {/* 3. Delete All Chats */}
+                            <button
+                              onClick={() => {
+                                setChatMenuOpen(false);
+                                setShowDeleteAllModal(true);
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-[5px] transition-all text-left cursor-pointer group"
+                            >
+                              <div className="w-6 h-6 rounded-[5px] bg-rose-50 text-rose-600 flex items-center justify-center flex-shrink-0 group-hover:bg-rose-100 transition-colors">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </div>
+                              <span className="font-medium">Delete All Chats</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1241,7 +1462,7 @@ export default function BusinessWorkspace({
                       placeholder="Search or start new chat"
                       value={contactSearch}
                       onChange={(e) => setContactSearch(e.target.value)}
-                      className="w-full bg-slate-100 text-slate-900 placeholder-slate-400 text-xs rounded-xl pl-8 pr-3 py-1.5 border border-transparent focus:border-teal-500 focus:bg-white focus:outline-none transition-all"
+                      className="w-full bg-slate-100 text-slate-900 placeholder-slate-400 text-xs rounded-sm pl-8 pr-3 py-3 border border-transparent focus:border-teal-500 focus:bg-white focus:outline-none transition-all"
                     />
                   </div>
 
@@ -1284,7 +1505,7 @@ export default function BusinessWorkspace({
                 </div>
 
                 {/* Contacts Scrollable List */}
-                <div className="flex-1 overflow-y-auto divide-y divide-slate-100 bg-white">
+                <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100 bg-white">
                   {contacts
                     .filter((c) => {
                       const matchSearch =
@@ -1348,7 +1569,7 @@ export default function BusinessWorkspace({
               </div>
 
               {/* WhatsApp Right Main Chat Window */}
-              <div className="flex-1 flex flex-col h-full bg-[#efeae2]/40 relative">
+              <div className="flex-1 min-h-0 flex flex-col h-full bg-[#efeae2]/40 relative">
                 {/* Active Chat Header */}
                 <div className="p-3.5 bg-slate-100/95 border-b border-slate-200 flex items-center justify-between flex-shrink-0 z-10">
                   <div className="flex items-center gap-3">
@@ -1372,7 +1593,7 @@ export default function BusinessWorkspace({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 text-slate-600">
+                  {/* <div className="flex items-center gap-1.5 text-slate-600">
                     <button className="p-2 hover:bg-slate-200/80 rounded-full transition-colors text-slate-600" title="Voice Call">
                       <Phone className="w-4 h-4" />
                     </button>
@@ -1385,11 +1606,14 @@ export default function BusinessWorkspace({
                     <button className="p-2 hover:bg-slate-200/80 rounded-full transition-colors text-slate-600" title="More Options">
                       <MoreVertical className="w-4 h-4" />
                     </button>
-                  </div>
+                  </div> */}
                 </div>
 
                 {/* Messages Canvas */}
-                <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-[#efeae2]/30">
+                <div 
+                  ref={chatMessagesContainerRef}
+                  className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3 bg-[#efeae2]/30 scroll-smooth"
+                >
                   {/* End-to-End Encryption Notice */}
                   <div className="max-w-md mx-auto p-2.5 rounded-xl bg-amber-50/90 border border-amber-200/80 text-center text-[11px] text-amber-900 shadow-xs space-y-1">
                     <div className="flex items-center justify-center gap-1.5 font-bold">
@@ -1477,6 +1701,9 @@ export default function BusinessWorkspace({
                       </div>
                     </div>
                   )}
+
+                  {/* Invisible scroll target */}
+                  <div ref={chatMessagesEndRef} />
                 </div>
 
                 {/* Suggested Quick Prompt Chips */}
@@ -1512,31 +1739,31 @@ export default function BusinessWorkspace({
 
                 {/* Attachment Drawer Menu */}
                 {attachmentMenuOpen && (
-                  <div className="absolute bottom-16 left-4 bg-white border border-slate-200 rounded-2xl shadow-xl p-3 z-30 grid grid-cols-2 gap-2 text-xs font-semibold animate-in fade-in slide-in-from-bottom-2">
+                  <div className="absolute bottom-16 left-4 bg-white border border-slate-200 rounded-[5px] shadow-xl p-3 z-30 grid grid-cols-2 gap-2 text-xs font-semibold animate-in fade-in slide-in-from-bottom-2">
                     <button
                       onClick={() => handleSendMessage(`📷 [Prescription/Image Attachment]: Sent photo for verification.`)}
-                      className="flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-100 text-slate-700 transition-colors"
+                      className="flex items-center gap-2 p-2.5 rounded-[5px] hover:bg-slate-100 text-slate-700 transition-colors"
                     >
                       <ImageIcon className="w-4 h-4 text-purple-600" />
                       <span>Photos &amp; OCR</span>
                     </button>
                     <button
                       onClick={() => handleSendMessage(`📄 [PDF Document]: Digital Rate Card & Invoice attached.`)}
-                      className="flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-100 text-slate-700 transition-colors"
+                      className="flex items-center gap-2 p-2.5 rounded-[5px] hover:bg-slate-100 text-slate-700 transition-colors"
                     >
                       <FileText className="w-4 h-4 text-blue-600" />
                       <span>PDF Document</span>
                     </button>
                     <button
                       onClick={() => handleSendMessage(`🛍️ [Catalog Item]: ${account.catalog[0]?.name || "Featured Product"} (${account.currency}${account.catalog[0]?.price || 0})`)}
-                      className="flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-100 text-slate-700 transition-colors"
+                      className="flex items-center gap-2 p-2.5 rounded-[5px] hover:bg-slate-100 text-slate-700 transition-colors"
                     >
                       <Package className="w-4 h-4 text-emerald-600" />
                       <span>Product Card</span>
                     </button>
                     <button
                       onClick={() => handleSendMessage(`🎙️ [Voice Note: 0:05s]: Audio inquiry for ${account.businessName}`)}
-                      className="flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-100 text-slate-700 transition-colors"
+                      className="flex items-center gap-2 p-2.5 rounded-[5px] hover:bg-slate-100 text-slate-700 transition-colors"
                     >
                       <Mic className="w-4 h-4 text-rose-600" />
                       <span>Voice Note</span>
@@ -1544,11 +1771,93 @@ export default function BusinessWorkspace({
                   </div>
                 )}
 
+                {/* Professional Emoji Picker Modal */}
+                {emojiModalOpen && (
+                  <div className="absolute bottom-16 left-3 sm:left-12 bg-white border border-slate-200/90 rounded-[5px] shadow-2xl z-40  max-w-[100vw] overflow-hidden animate-in fade-in slide-in-from-bottom-2">
+                    {/* Emoji Modal Header */}
+                    <div className="p-3 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Smile className="w-4 h-4 text-teal-600" />
+                        <span className="text-xs font-bold text-slate-800">Select Emoji</span>
+                      </div>
+                      <button
+                        onClick={() => setEmojiModalOpen(false)}
+                        className="p-1 hover:bg-slate-200 text-slate-400 hover:text-slate-700 rounded-[5px] transition-colors cursor-pointer"
+                        title="Close Emoji Picker"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Emoji Category Tabs */}
+                    <div className="p-2 border-b border-slate-100 bg-white flex items-center gap-1.5 overflow-x-auto text-[11px]">
+                      {[
+                        { id: "all", label: "🔥 All" },
+                        { id: "smileys", label: "😀 Smileys" },
+                        { id: "business", label: "💼 Business" },
+                        { id: "health", label: "💊 Health" },
+                        { id: "symbols", label: "✨ Symbols" }
+                      ].map((cat) => (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setSelectedEmojiCategory(cat.id)}
+                          className={`px-2.5 py-1 rounded-[5px] font-bold whitespace-nowrap transition-all cursor-pointer ${
+                            selectedEmojiCategory === cat.id
+                              ? "bg-teal-600 text-white shadow-2xs"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          {cat.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Emoji Grid */}
+                    <div className="p-2.5 max-h-56 overflow-y-auto grid grid-cols-8 gap-1.5 bg-slate-50/40">
+                      {[
+                        ...(selectedEmojiCategory === "all" || selectedEmojiCategory === "smileys"
+                          ? ["😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "😉", "😍", "🥰", "😘", "😋", "😜", "😎", "🤩", "🥳", "😏", "🤔", "🤫", "😴", "😷", "🤒", "🤑", "🙌", "👏", "👍", "👎", "🤝", "🙏", "✌️", "👌", "💪", "❤️", "🔥", "✨", "🎉"]
+                          : []),
+                        ...(selectedEmojiCategory === "all" || selectedEmojiCategory === "business"
+                          ? ["💼", "🛒", "💰", "💵", "💳", "🧾", "📦", "🛍️", "🏷️", "📊", "📈", "🏢", "🚚", "🚀", "⚡", "🎁", "🔔", "📢", "💬", "📱", "📞", "✉️", "📧", "📝", "📋", "📅", "🕒", "⏳", "🔒", "🔑", "🛡️", "✅", "⭐", "🌟", "🏆", "🎯"]
+                          : []),
+                        ...(selectedEmojiCategory === "all" || selectedEmojiCategory === "health"
+                          ? ["💊", "🩺", "🏥", "💉", "🩹", "🧬", "🌡️", "🍏", "🍎", "🥗", "🥑", "🥦", "💧", "🏋️", "🧘", "🏃", "🌿", "🌱", "🍵", "🧴", "🧼", "🦷", "🫀", "🫁", "🧠", "☀️", "🌈", "🪴", "🍇", "🍊", "🍋", "🍌", "🥕", "🥜"]
+                          : []),
+                        ...(selectedEmojiCategory === "all" || selectedEmojiCategory === "symbols"
+                          ? ["💡", "📌", "📍", "🎯", "💯", "🔥", "✨", "💥", "⚡", "⭐", "🌟", "☀️", "🌙", "☁️", "☔", "❄️", "☕", "🍕", "🍔", "🚗", "✈️", "🛵", "🚲", "🏠", "🛎️", "⚠️", "⛔", "🚫", "❓", "❗", "✔️", "❌", "➕", "➖", "💲", "🔤", "🔢", "🌐", "🔗"]
+                          : [])
+                      ].map((emoji, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => {
+                            setInputPrompt((prev) => prev + emoji);
+                          }}
+                          className="h-8 flex items-center justify-center text-lg hover:bg-white hover:shadow-xs hover:scale-125 rounded-[5px] transition-all cursor-pointer select-none"
+                          title="Click to insert emoji"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Emoji Modal Footer Tip */}
+                    <div className="p-2 bg-slate-50 border-t border-slate-200 text-center text-[10px] text-slate-500 font-medium">
+                      Click any emoji to insert directly into message
+                    </div>
+                  </div>
+                )}
+
                 {/* WhatsApp Bottom Input Bar */}
                 <div className="p-3 bg-slate-100 border-t border-slate-200 flex items-center gap-2 flex-shrink-0">
                   <button
-                    onClick={() => setAttachmentMenuOpen(!attachmentMenuOpen)}
-                    className={`p-2 rounded-full transition-colors ${
+                    onClick={() => {
+                      setAttachmentMenuOpen(!attachmentMenuOpen);
+                      setEmojiModalOpen(false);
+                    }}
+                    className={`p-2 rounded-[5px] transition-colors cursor-pointer ${
                       attachmentMenuOpen ? "bg-teal-600 text-white" : "hover:bg-slate-200 text-slate-600"
                     }`}
                     title="Attach"
@@ -1556,7 +1865,17 @@ export default function BusinessWorkspace({
                     <Paperclip className="w-4 h-4" />
                   </button>
 
-                  <button className="p-2 hover:bg-slate-200 text-slate-600 rounded-full transition-colors" title="Emojis">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmojiModalOpen(!emojiModalOpen);
+                      setAttachmentMenuOpen(false);
+                    }}
+                    className={`p-2 rounded-[5px] transition-colors cursor-pointer ${
+                      emojiModalOpen ? "bg-teal-600 text-white" : "hover:bg-slate-200 text-slate-600"
+                    }`}
+                    title="Emojis"
+                  >
                     <Smile className="w-4 h-4" />
                   </button>
 
@@ -1567,13 +1886,13 @@ export default function BusinessWorkspace({
                     onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
                     placeholder={`Type a message to ${activeContact.name}...`}
                     disabled={isTyping}
-                    className="flex-1 bg-white text-slate-900 placeholder-slate-400 rounded-xl px-4 py-2 text-xs border border-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
+                    className="flex-1 bg-white text-slate-900 placeholder-slate-400 rounded-[5px] px-4 py-2 text-xs border border-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500"
                   />
 
                   {/* Voice Note Simulation Mic Button */}
                   <button
                     onClick={handleToggleVoiceRecording}
-                    className={`p-2 rounded-full transition-all ${
+                    className={`p-2 rounded-[5px] transition-all cursor-pointer ${
                       isRecording
                         ? "bg-rose-500 text-white animate-pulse"
                         : "hover:bg-slate-200 text-slate-600"
@@ -1587,7 +1906,7 @@ export default function BusinessWorkspace({
                   <button
                     onClick={() => handleSendMessage()}
                     disabled={!inputPrompt.trim() || isTyping}
-                    className={`p-2.5 rounded-xl text-white transition-all ${
+                    className={`p-2.5 rounded-[5px] text-white transition-all cursor-pointer ${
                       inputPrompt.trim() && !isTyping
                         ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 shadow-sm shadow-teal-500/20"
                         : "bg-slate-200 text-slate-400 cursor-not-allowed"
@@ -1597,6 +1916,222 @@ export default function BusinessWorkspace({
                   </button>
                 </div>
               </div>
+
+              {/* MODAL 1: Delete All Chats Confirmation Modal */}
+              {showDeleteAllModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
+                  <div className="bg-white rounded-[5px] border border-slate-200 max-w-sm w-full p-6 shadow-2xl space-y-4 text-center">
+                    <div className="w-12 h-12 rounded-[5px] bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-200">
+                      <Trash2 className="w-6 h-6" />
+                    </div>
+
+                    <div className="space-y-1">
+                      <h3 className="text-base font-black text-slate-900">Delete All Messages?</h3>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        Are you sure you want to delete all messages across all conversations? This action cannot be undone.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2">
+                      <button
+                        onClick={() => setShowDeleteAllModal(false)}
+                        className="flex-1 py-2.5 px-4 rounded-[5px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleDeleteAllChats}
+                        className="flex-1 py-2.5 px-4 rounded-[5px] bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold shadow-md shadow-rose-600/20 transition-colors cursor-pointer"
+                      >
+                        Yes, Delete All
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODAL 2: Change Session Modal */}
+              {showChangeSessionModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
+                  <div className="bg-white rounded-[5px] border border-slate-200 max-w-md w-full p-6 shadow-2xl space-y-5">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-[5px] bg-teal-50 text-teal-700 text-[10px] font-bold border border-teal-200 mb-1">
+                          <Key className="w-3 h-3 text-teal-600" />
+                          <span>Multi-Device Gateway</span>
+                        </div>
+                        <h3 className="text-base font-black text-slate-900">Change WhatsApp Session</h3>
+                        <p className="text-xs text-slate-500">
+                          Select an active WhatsApp session to route conversations.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setShowChangeSessionModal(false)}
+                        className="p-1.5 text-slate-400 hover:text-slate-700 rounded-[5px] hover:bg-slate-100 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                      {sessions.map((sess) => {
+                        const isSelected = selectedSessionToSwitch === sess.id;
+                        const isCurrentActive = activeSessionId === sess.id;
+                        return (
+                          <div
+                            key={sess.id}
+                            onClick={() => setSelectedSessionToSwitch(sess.id)}
+                            className={`p-3.5 rounded-[5px] border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                              isSelected
+                                ? "bg-teal-50/80 border-teal-500 shadow-xs ring-2 ring-teal-500/20"
+                                : "bg-slate-50 border-slate-200 hover:border-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className={`w-9 h-9 rounded-[5px] flex items-center justify-center font-bold text-xs ${
+                                isSelected ? "bg-teal-600 text-white" : "bg-slate-200 text-slate-700"
+                              }`}>
+                                <Phone className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <h5 className="text-xs font-bold text-slate-900">{sess.name}</h5>
+                                  {isCurrentActive && (
+                                    <span className="px-1.5 py-0.2 rounded-[5px] text-[9px] font-extrabold bg-teal-100 text-teal-800 border border-teal-300">
+                                      CURRENT
+                                    </span>
+                                  )}
+                                  {sess.isPrimary && !isCurrentActive && (
+                                    <span className="px-1.5 py-0.2 rounded-[5px] text-[9px] font-bold bg-slate-200 text-slate-700">
+                                      PRIMARY
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[10px] font-mono text-slate-500">{sess.phoneNumber}</p>
+                              </div>
+                            </div>
+
+                            <div className="text-right flex flex-col items-end gap-1">
+                              <span className={`px-2 py-0.5 rounded-[5px] text-[9px] font-bold border ${
+                                sess.status === "CONNECTED"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                                  : "bg-amber-50 text-amber-700 border-amber-300"
+                              }`}>
+                                {sess.status}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-medium">⚡ {sess.batteryPercent}% ({sess.latencyMs}ms)</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {sessions.length === 0 && (
+                        <p className="text-xs text-slate-500 text-center py-4">No active sessions found.</p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => setShowChangeSessionModal(false)}
+                        className="flex-1 py-2.5 px-4 rounded-[5px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => handleSwitchSession(selectedSessionToSwitch)}
+                        className="flex-1 py-2.5 px-4 rounded-[5px] bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white text-xs font-extrabold shadow-md shadow-teal-500/20 transition-colors cursor-pointer"
+                      >
+                        Confirm Switch
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODAL 3: Add New Chat Modal */}
+              {showAddChatModal && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in">
+                  <div className="bg-white rounded-[5px] border border-slate-200 max-w-md w-full p-6 shadow-2xl space-y-5">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-[5px] bg-teal-50 text-teal-700 text-[10px] font-bold border border-teal-200 mb-1">
+                          <UserPlus className="w-3 h-3 text-teal-600" />
+                          <span>New Contact</span>
+                        </div>
+                        <h3 className="text-base font-black text-slate-900">Start New WhatsApp Chat</h3>
+                        <p className="text-xs text-slate-500">
+                          Enter recipient name and phone number to start messaging.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => setShowAddChatModal(false)}
+                        className="p-1.5 text-slate-400 hover:text-slate-700 rounded-[5px] hover:bg-slate-100 cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 text-xs font-semibold">
+                      <div>
+                        <label className="block mb-1 text-slate-700">Contact / Customer Name</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Sneha Mukherjee"
+                          value={newContactName}
+                          onChange={(e) => setNewContactName(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-[5px] px-3.5 py-2.5 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block mb-1 text-slate-700">WhatsApp Phone Number</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. +91 98300 12345"
+                          value={newContactPhone}
+                          onChange={(e) => setNewContactPhone(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-[5px] px-3.5 py-2.5 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:bg-white font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block mb-1 text-slate-700">Inquiry Tag / Category</label>
+                        <select
+                          value={newContactTag}
+                          onChange={(e) => setNewContactTag(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-[5px] px-3.5 py-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:bg-white"
+                        >
+                          <option value="Active Inquiry">Active Inquiry</option>
+                          <option value="Lead">New Lead</option>
+                          <option value="Priority">Priority Customer</option>
+                          <option value="Order Pending">Order Pending</option>
+                          <option value="Delivery">Doorstep Delivery</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                      <button
+                        onClick={() => setShowAddChatModal(false)}
+                        className="flex-1 py-2.5 px-4 rounded-[5px] bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handleAddNewContact}
+                        disabled={!newContactName.trim() || !newContactPhone.trim()}
+                        className={`flex-1 py-2.5 px-4 rounded-[5px] text-xs font-extrabold shadow-md transition-colors cursor-pointer ${
+                          newContactName.trim() && newContactPhone.trim()
+                            ? "bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white shadow-teal-500/20"
+                            : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                        }`}
+                      >
+                        Start Chat
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1604,9 +2139,9 @@ export default function BusinessWorkspace({
           {activeTab === "session" && (
             <div className="max-w-12xl mx-auto space-y-8">
               {/* Sessions Header */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200/90 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-[5px] border border-slate-200/90 shadow-sm">
                 <div>
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 text-teal-700 text-xs font-bold border border-teal-200 mb-2">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-[5px] bg-teal-50 text-teal-700 text-xs font-bold border border-teal-200 mb-2">
                     <Key className="w-3.5 h-3.5 text-teal-600" />
                     <span>Multi-Device WhatsApp Gateway</span>
                   </div>
@@ -1617,8 +2152,8 @@ export default function BusinessWorkspace({
                 </div>
 
                 <button
-                  onClick={handleAddNewSession}
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white text-xs font-extrabold flex items-center gap-2 shadow-md shadow-teal-500/20 transition-all flex-shrink-0"
+                  onClick={() => setActiveTab("webqr")}
+                  className="px-5 py-2.5 rounded-[5px] bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white text-xs font-extrabold flex items-center gap-2 shadow-md shadow-teal-500/20 transition-all flex-shrink-0 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Connect New Session</span>
@@ -1631,98 +2166,94 @@ export default function BusinessWorkspace({
                   <h4 className="text-xs font-black text-slate-400 uppercase tracking-wider">
                     Connected Instances ({sessions.length})
                   </h4>
-                  <span className="text-xs text-teal-600 font-bold bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">
+                  <span className="text-xs text-teal-600 font-bold bg-teal-50 px-2.5 py-0.5 rounded-[5px] border border-teal-200">
                     Auto-Failover Active
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {sessions.map((sess) => (
-                    <div
-                      key={sess.id}
-                      className="p-6 rounded-3xl bg-white border border-slate-200/90 shadow-sm hover:shadow-md hover:border-teal-300 transition-all space-y-4"
-                    >
-                      {/* Session Top Header */}
-                      <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h5 className="font-bold text-slate-900 text-sm">{sess.name}</h5>
-                            {sess.isPrimary && (
-                              <span className="px-2 py-0.5 rounded-md bg-teal-100 text-teal-800 text-[10px] font-extrabold border border-teal-300">
-                                PRIMARY
-                              </span>
-                            )}
+                {sessions.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {sessions.map((sess) => (
+                      <div
+                        key={sess.id}
+                        className="p-6 rounded-[5px] bg-white border border-slate-200/90 shadow-sm hover:shadow-md hover:border-teal-300 transition-all space-y-4"
+                      >
+                        {/* Session Top Header */}
+                        <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h5 className="font-bold text-slate-900 text-sm">{sess.name}</h5>
+                              {sess.isPrimary && (
+                                <span className="px-2 py-0.5 rounded-[5px] bg-teal-100 text-teal-800 text-[10px] font-extrabold border border-teal-300">
+                                  PRIMARY
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] font-mono text-slate-400 mt-0.5">
+                              ID: <span className="text-teal-700 font-bold">{sess.id}</span>
+                            </p>
                           </div>
-                          <p className="text-[11px] font-mono text-slate-400 mt-0.5">
-                            ID: <span className="text-teal-700 font-bold">{sess.id}</span>
-                          </p>
+
+                          <span className={`px-2.5 py-1 rounded-[5px] text-[10px] font-extrabold border flex items-center gap-1.5 ${
+                            sess.status === "CONNECTED"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                              : "bg-amber-50 text-amber-700 border-amber-300"
+                          }`}>
+                            <span className={`w-2 h-2 rounded-full ${sess.status === "CONNECTED" ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
+                            <span>{sess.status}</span>
+                          </span>
                         </div>
 
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold border flex items-center gap-1.5 ${
-                          sess.status === "CONNECTED"
-                            ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                            : "bg-amber-50 text-amber-700 border-amber-300"
-                        }`}>
-                          <span className={`w-2 h-2 rounded-full ${sess.status === "CONNECTED" ? "bg-emerald-500 animate-pulse" : "bg-amber-500"}`} />
-                          <span>{sess.status}</span>
-                        </span>
+                        {/* Required Key Session Attributes */}
+                        <div className="grid grid-cols-2 gap-3 text-xs bg-slate-50 p-4 rounded-[5px] border border-slate-100">
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Phone Number:</span>
+                            <span className="font-mono font-bold text-slate-900">{sess.phoneNumber}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Auto-Reconnect:</span>
+                            <span className="text-emerald-700 font-semibold text-[11px]">{sess.autoReconnect}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Last Connected:</span>
+                            <span className="font-mono text-slate-700">{sess.lastConnected}</span>
+                          </div>
+
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Platform &amp; Health:</span>
+                            <span className="text-teal-700 font-semibold text-[11px]">Battery: {sess.batteryPercent}% ⚡ ({sess.latencyMs}ms)</span>
+                          </div>
+                        </div>
+
+                        {/* Session Action Buttons */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            onClick={() => setViewingSessionQr(sess)}
+                            className="flex-1 py-2 px-3 rounded-[5px] bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-200 flex items-center justify-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+                          >
+                            <QrCode className="w-3.5 h-3.5 text-teal-600" />
+                            <span>View Status / QR</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleDeleteSession(sess.id)}
+                            className="py-2 px-3.5 rounded-[5px] bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                            title="Delete / Disconnect Session"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete</span>
+                          </button>
+                        </div>
                       </div>
-
-                      {/* Required Key Session Attributes */}
-                      <div className="grid grid-cols-2 gap-3 text-xs bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                        <div>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase block">Phone Number:</span>
-                          <span className="font-mono font-bold text-slate-900">{sess.phoneNumber}</span>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase block">Auto-Reconnect:</span>
-                          <span className="text-emerald-700 font-semibold text-[11px]">{sess.autoReconnect}</span>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase block">Last Connected:</span>
-                          <span className="font-mono text-slate-700">{sess.lastConnected}</span>
-                        </div>
-
-                        <div>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase block">Platform &amp; Health:</span>
-                          <span className="text-teal-700 font-semibold text-[11px]">Battery: {sess.batteryPercent}% ⚡ ({sess.latencyMs}ms)</span>
-                        </div>
-                      </div>
-
-                      {/* Session Action Buttons */}
-                      <div className="flex items-center gap-2 pt-1">
-                        <button
-                          onClick={() => setViewingSessionQr(sess)}
-                          className="flex-1 py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold border border-slate-200 flex items-center justify-center gap-1.5 transition-colors shadow-2xs"
-                        >
-                          <QrCode className="w-3.5 h-3.5 text-teal-600" />
-                          <span>View Status / QR</span>
-                        </button>
-
-                        <button
-                          onClick={() => handleDeleteSession(sess.id)}
-                          className="py-2 px-3.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold border border-rose-200 flex items-center justify-center gap-1.5 transition-colors"
-                          title="Delete / Disconnect Session"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Delete</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
 
                 {sessions.length === 0 && (
-                  <div className="p-8 text-center bg-white rounded-3xl border border-slate-200 text-slate-500 space-y-3">
-                    <p className="text-sm font-semibold">No active WhatsApp sessions connected.</p>
-                    <button
-                      onClick={handleAddNewSession}
-                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 text-white text-xs font-bold"
-                    >
-                      + Connect Primary Session
-                    </button>
+                  <div className="p-8 text-center bg-white rounded-[5px] border border-slate-200/90 text-slate-500 font-medium text-xs">
+                    No sessions added now.
                   </div>
                 )}
               </div>

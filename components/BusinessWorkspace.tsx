@@ -51,6 +51,8 @@ import {
 } from "lucide-react";
 import { BusinessAccount, BusinessCategory, CatalogItem, ChatMessage } from "@/lib/types";
 import { updateBusinessAccount, generateSimulatedReply } from "@/lib/storage";
+import { MessageApiClient } from "@/lib/api";
+import { generateQrSvgDataUrl } from "@/lib/qr";
 
 interface WorkspaceProps {
   account: BusinessAccount;
@@ -511,6 +513,15 @@ export default function BusinessWorkspace({
   // Feedback state
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [qrRefreshed, setQrRefreshed] = useState(false);
+  const [backendStatus, setBackendStatus] = useState<"checking" | "connected" | "offline">("checking");
+  const [isSyncingRag, setIsSyncingRag] = useState(false);
+  const [ragSyncMessage, setRagSyncMessage] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    MessageApiClient.checkHealth().then((res) => {
+      setBackendStatus(res.online ? "connected" : "offline");
+    });
+  }, []);
 
   // Multi-Session WhatsApp Management State
   const [sessions, setSessions] = useState<{
@@ -564,12 +575,99 @@ export default function BusinessWorkspace({
     isPrimary?: boolean;
   } | null>(null);
 
+  // Dynamic QR Code State
+  const [webQrDataUrl, setWebQrDataUrl] = useState<string>(() =>
+    generateQrSvgDataUrl(`2@wa_primary_01,${account.businessName},msgapi_gateway`)
+  );
+  const [modalQrDataUrl, setModalQrDataUrl] = useState<string | null>(null);
+
+  // Listen to live QR Stream from Baileys backend for WebQR tab
+  React.useEffect(() => {
+    if (activeTab !== "webqr") return;
+
+    const primarySessionId = sessions.find((s) => s.isPrimary)?.id || sessions[0]?.id || "wa_primary_01";
+    let eventSource: EventSource | null = null;
+
+    try {
+      const streamUrl = MessageApiClient.getQrStreamUrl(primarySessionId);
+      eventSource = new EventSource(streamUrl);
+
+      eventSource.addEventListener("qr", (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.qr) setWebQrDataUrl(data.qr);
+        } catch (e) {}
+      });
+
+      eventSource.addEventListener("ready", (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === primarySessionId
+                ? { ...s, status: "CONNECTED", phoneNumber: data.phoneNumber || s.phoneNumber }
+                : s
+            )
+          );
+        } catch (e) {}
+      });
+    } catch (e) {}
+
+    return () => {
+      eventSource?.close();
+    };
+  }, [activeTab, sessions]);
+
+  // Listen to live QR Stream when viewing a session in modal
+  React.useEffect(() => {
+    if (!viewingSessionQr) {
+      setModalQrDataUrl(null);
+      return;
+    }
+
+    setModalQrDataUrl(generateQrSvgDataUrl(`2@${viewingSessionQr.id},${Date.now()},msgapi_pair`));
+
+    let eventSource: EventSource | null = null;
+    try {
+      const streamUrl = MessageApiClient.getQrStreamUrl(viewingSessionQr.id);
+      eventSource = new EventSource(streamUrl);
+
+      eventSource.addEventListener("qr", (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.qr) setModalQrDataUrl(data.qr);
+        } catch (e) {}
+      });
+
+      eventSource.addEventListener("ready", (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          setViewingSessionQr((prev) =>
+            prev ? { ...prev, status: "CONNECTED", phoneNumber: data.phoneNumber || prev.phoneNumber } : null
+          );
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === viewingSessionQr.id
+                ? { ...s, status: "CONNECTED", phoneNumber: data.phoneNumber || s.phoneNumber }
+                : s
+            )
+          );
+        } catch (e) {}
+      });
+    } catch (e) {}
+
+    return () => {
+      eventSource?.close();
+    };
+  }, [viewingSessionQr?.id]);
+
   // Delete Session
   const handleDeleteSession = (sessionId: string) => {
     setSessions((prev) => prev.filter((s) => s.id !== sessionId));
     if (viewingSessionQr?.id === sessionId) {
       setViewingSessionQr(null);
     }
+    MessageApiClient.deleteSession(sessionId, account.apiKey).catch(() => null);
   };
 
   // Add New Session
@@ -589,6 +687,13 @@ export default function BusinessWorkspace({
     };
     setSessions((prev) => [...prev, newSession]);
     setViewingSessionQr(newSession);
+
+    // Call backend to initialize Baileys session
+    MessageApiClient.createSession(newId, newSession.name, account.apiKey)
+      .then((res) => {
+        if (res?.qrCode) setModalQrDataUrl(res.qrCode);
+      })
+      .catch(() => null);
   };
 
   // WebQR Custom Session Name & Creation State
@@ -603,7 +708,7 @@ export default function BusinessWorkspace({
     const newSession = {
       id: newId,
       name: trimmed,
-      status: "CONNECTED" as const,
+      status: "CONNECTING" as const,
       phoneNumber: "+91 93824 68250",
       autoReconnect: "Enabled (Safe Pacing)",
       lastConnected: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
@@ -614,8 +719,19 @@ export default function BusinessWorkspace({
     };
     setSessions((prev) => [...prev, newSession]);
     setQrSessionNameInput("");
-    setSessionCreatedMessage(`Session "${trimmed}" created and connected successfully!`);
+    setSessionCreatedMessage(`Session "${trimmed}" created! Scan QR code to link device.`);
     setQrRefreshed(true);
+
+    // Immediately generate scannable QR
+    setWebQrDataUrl(generateQrSvgDataUrl(`2@${newId},${Date.now()},msgapi_gateway`));
+
+    // Initialize on Baileys backend
+    MessageApiClient.createSession(newId, trimmed, account.apiKey)
+      .then((res) => {
+        if (res?.qrCode) setWebQrDataUrl(res.qrCode);
+      })
+      .catch(() => null);
+
     setTimeout(() => setQrRefreshed(false), 1200);
     setTimeout(() => setSessionCreatedMessage(null), 3500);
   };
@@ -661,8 +777,8 @@ export default function BusinessWorkspace({
 
     if (aiAutoPilot) {
       setIsTyping(true);
-      setTimeout(() => {
-        const reply = generateSimulatedReply(account, text);
+
+      const handleReply = (reply: string) => {
         setIsTyping(false);
         const botMsg: ChatMessage = {
           id: createWsMessageId("bot"),
@@ -684,7 +800,22 @@ export default function BusinessWorkspace({
               : c
           )
         );
-      }, 1300);
+      };
+
+      // Query real RAG ERP engine on the backend
+      MessageApiClient.queryErp(text, account.apiKey)
+        .then((res) => {
+          if (res?.aiGeneratedReply) {
+            handleReply(res.aiGeneratedReply);
+          } else {
+            handleReply(generateSimulatedReply(account, text));
+          }
+        })
+        .catch(() => {
+          setTimeout(() => {
+            handleReply(generateSimulatedReply(account, text));
+          }, 800);
+        });
     }
   };
 
@@ -715,6 +846,9 @@ export default function BusinessWorkspace({
     const updated = updateBusinessAccount(account.id, { catalog: updatedCatalog });
     if (updated) onUpdateAccount(updated);
 
+    // Sync to backend database & pgvector
+    MessageApiClient.saveCatalogItems(updatedCatalog, account.apiKey).catch(() => null);
+
     setNewProdName("");
     setNewProdPrice("");
     setNewProdStock("");
@@ -725,6 +859,23 @@ export default function BusinessWorkspace({
     const updatedCatalog = account.catalog.filter((c) => c.id !== id);
     const updated = updateBusinessAccount(account.id, { catalog: updatedCatalog });
     if (updated) onUpdateAccount(updated);
+
+    MessageApiClient.saveCatalogItems(updatedCatalog, account.apiKey).catch(() => null);
+  };
+
+  // Sync Catalog with pgvector LangChain RAG pipeline
+  const handleSyncRag = async () => {
+    setIsSyncingRag(true);
+    setRagSyncMessage(null);
+    try {
+      const res = await MessageApiClient.syncRagEmbeddings(account.apiKey);
+      setRagSyncMessage(res.message || "Catalog successfully indexed into pgvector!");
+    } catch {
+      setRagSyncMessage("Backend offline. Start server with `npm run dev` in /server.");
+    } finally {
+      setIsSyncingRag(false);
+      setTimeout(() => setRagSyncMessage(null), 4000);
+    }
   };
 
   // Save Settings
@@ -743,6 +894,17 @@ export default function BusinessWorkspace({
       onUpdateAccount(updated);
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 2500);
+
+      // Sync to backend database
+      MessageApiClient.updateAccount(account.id, {
+        businessName,
+        ownerName,
+        phone,
+        workingHours,
+        address,
+        greetingMessage: greeting,
+        aiPersonaPrompt: prompt
+      }, account.apiKey).catch(() => null);
     }
   };
 
@@ -1026,32 +1188,154 @@ export default function BusinessWorkspace({
                 ))}
               </div> */}
 
-              {/* INDUSTRY OPERATIONAL HIGHLIGHTS */}
-              {/* <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">
-                    {account.categoryLabel} Automated Workflows
-                  </h3>
-                  <span className="text-xs text-teal-600 font-bold bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">100% Autonomous AI</span>
+              {/* LIVE CATALOG & PGVECTOR RAG MANAGEMENT */}
+              <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-6 sm:p-8 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+                  <div className="space-y-1">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-teal-50 text-teal-700 text-xs font-bold border border-teal-200">
+                      <Sparkles className="w-3.5 h-3.5 text-teal-600" />
+                      <span>LangChain pgvector RAG Pipeline</span>
+                    </div>
+                    <h3 className="text-lg font-black text-slate-900">Live Inventory &amp; Vector Search Catalog</h3>
+                    <p className="text-xs text-slate-500">
+                      Items indexed here are queried by the AI WhatsApp assistant using semantic vector embeddings on PostgreSQL.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={handleSyncRag}
+                      disabled={isSyncingRag}
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-500 to-blue-600 hover:opacity-95 text-white text-xs font-extrabold flex items-center gap-2 shadow-md shadow-teal-500/20 transition-all"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncingRag ? "animate-spin" : ""}`} />
+                      <span>{isSyncingRag ? "Syncing pgvector..." : "⚡ Sync pgvector RAG"}</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {industry.operationalHighlights.map((feat, i) => {
-                    const FeatIcon = feat.icon;
-                    return (
-                      <div key={i} className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-xs space-y-2.5 hover:border-teal-300 hover:shadow-sm transition-all">
-                        <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center font-bold border border-teal-200/80">
-                          <FeatIcon className="w-4 h-4" />
-                        </div>
-                        <h4 className="text-sm font-bold text-slate-900">{feat.title}</h4>
-                        <p className="text-xs text-slate-600 leading-relaxed font-medium">{feat.desc}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div> */}
+                {ragSyncMessage && (
+                  <div className="p-3.5 rounded-2xl bg-teal-50 border border-teal-200 text-teal-900 text-xs font-bold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-teal-600 flex-shrink-0" />
+                    <span>{ragSyncMessage}</span>
+                  </div>
+                )}
 
-             
+                {/* Add New Product Form */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Quick Add Product / SKU</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 text-xs">
+                    <input
+                      type="text"
+                      placeholder="Item Name (e.g. Dolo 650mg)"
+                      value={newProdName}
+                      onChange={(e) => setNewProdName(e.target.value)}
+                      className="sm:col-span-2 bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-teal-500"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Price (₹)"
+                      value={newProdPrice}
+                      onChange={(e) => setNewProdPrice(e.target.value)}
+                      className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-teal-500"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Stock Qty"
+                      value={newProdStock}
+                      onChange={(e) => setNewProdStock(e.target.value)}
+                      className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-teal-500"
+                    />
+                    <button
+                      onClick={handleAddProduct}
+                      disabled={!newProdName.trim() || !newProdPrice.trim()}
+                      className={`rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        newProdName.trim() && newProdPrice.trim()
+                          ? "bg-teal-600 hover:bg-teal-700 text-white shadow-xs"
+                          : "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      }`}
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add Item</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Search & Catalog Table */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="relative flex-1 max-w-sm">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search live catalog by name, category, or SKU..."
+                        value={catalogSearch}
+                        onChange={(e) => setCatalogSearch(e.target.value)}
+                        className="w-full pl-9 pr-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-slate-500">
+                      Total Active SKUs: <strong className="text-slate-900">{filteredCatalog.length}</strong>
+                    </span>
+                  </div>
+
+                  <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
+                        <tr>
+                          <th className="p-3 pl-4">SKU</th>
+                          <th className="p-3">Product Name</th>
+                          <th className="p-3">Category</th>
+                          <th className="p-3">Price</th>
+                          <th className="p-3">Stock</th>
+                          <th className="p-3 pr-4 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                        {filteredCatalog.map((item) => (
+                          <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-3 pl-4 font-mono font-bold text-teal-700 text-[11px]">{item.sku}</td>
+                            <td className="p-3 font-bold text-slate-900">{item.name}</td>
+                            <td className="p-3">
+                              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[10px] font-semibold border border-slate-200">
+                                {item.category}
+                              </span>
+                            </td>
+                            <td className="p-3 font-semibold text-slate-900">
+                              {account.currency}{item.price.toFixed(2)}
+                            </td>
+                            <td className="p-3">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                item.stock > 0
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  : "bg-rose-50 text-rose-700 border border-rose-200"
+                              }`}>
+                                {item.stock > 0 ? `${item.stock} ${item.unit} in stock` : "Out of stock"}
+                              </span>
+                            </td>
+                            <td className="p-3 pr-4 text-right">
+                              <button
+                                onClick={() => handleRemoveProduct(item.id)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                                title="Delete SKU"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {filteredCatalog.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="p-8 text-center text-slate-400">
+                              No items match &quot;{catalogSearch}&quot;
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -1240,21 +1524,16 @@ export default function BusinessWorkspace({
 
                 {/* QR Code Container */}
                 <div className="relative inline-block p-6 rounded-3xl bg-white shadow-xl mx-auto border-4 border-teal-500/30">
-                  {/* High-Contrast QR Code Representation */}
-                  <div className="w-56 h-56 bg-slate-950 rounded-2xl p-4 flex flex-col items-center justify-center relative overflow-hidden">
-                    <div className="grid grid-cols-6 gap-2 w-full h-full opacity-90">
-                      {Array.from({ length: 36 }).map((_, idx) => (
-                        <div
-                          key={idx}
-                          className={`rounded-sm ${
-                            idx % 2 === 0 || idx % 5 === 0 ? "bg-white" : "bg-slate-900"
-                          }`}
-                        />
-                      ))}
-                    </div>
+                  {/* Real Scannable QR Code */}
+                  <div className="w-56 h-56 bg-white rounded-2xl p-2 flex flex-col items-center justify-center relative overflow-hidden border border-slate-100 shadow-inner">
+                    <img
+                      src={webQrDataUrl}
+                      alt="WhatsApp Web QR Code"
+                      className="w-full h-full object-contain rounded-lg"
+                    />
 
-                    <div className="absolute inset-0 bg-slate-950/20 flex items-center justify-center">
-                      <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-blue-600 flex items-center justify-center text-white shadow-lg">
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-blue-600 flex items-center justify-center text-white shadow-lg border-2 border-white">
                         <IndustryIcon className="w-6 h-6" />
                       </div>
                     </div>
@@ -2281,19 +2560,14 @@ export default function BusinessWorkspace({
 
                     {/* QR Code Graphic Frame */}
                     <div className="relative inline-block p-5 rounded-2xl bg-white shadow-lg border-2 border-teal-500/30 mx-auto">
-                      <div className="w-48 h-48 bg-slate-950 rounded-xl p-3 flex flex-col items-center justify-center relative overflow-hidden">
-                        <div className="grid grid-cols-6 gap-2 w-full h-full opacity-90">
-                          {Array.from({ length: 36 }).map((_, idx) => (
-                            <div
-                              key={idx}
-                              className={`rounded-xs ${
-                                idx % 2 === 0 || idx % 5 === 0 ? "bg-white" : "bg-slate-900"
-                              }`}
-                            />
-                          ))}
-                        </div>
-                        <div className="absolute inset-0 bg-slate-950/20 flex items-center justify-center">
-                          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-blue-600 flex items-center justify-center text-white shadow-md">
+                      <div className="w-52 h-52 bg-white rounded-xl p-2 flex flex-col items-center justify-center relative overflow-hidden border border-slate-100 shadow-inner">
+                        <img
+                          src={modalQrDataUrl || webQrDataUrl}
+                          alt="WhatsApp Session QR Code"
+                          className="w-full h-full object-contain rounded-lg"
+                        />
+                        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-blue-600 flex items-center justify-center text-white shadow-md border-2 border-white">
                             <QrCode className="w-5 h-5" />
                           </div>
                         </div>

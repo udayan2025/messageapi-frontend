@@ -11,9 +11,9 @@ export default function Footer({ onOpenWizard }: FooterProps) {
   return (
     <footer className="bg-slate-900 text-slate-400 text-xs border-t border-slate-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 space-y-12">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+        <div className="flex justify-between gap-8">
           {/* Col 1: Brand info */}
-          <div className="space-y-4 md:col-span-1">
+          <div className="space-y-4 w-full sm:w-1/3">
             <div className="flex items-center gap-2 text-white font-black text-base">
               <div className="w-8 h-8 rounded-xl bg-emerald-600 flex items-center justify-center font-bold text-white">
                 <MessageSquare className="w-4 h-4" />
@@ -29,33 +29,8 @@ export default function Footer({ onOpenWizard }: FooterProps) {
             </div>
           </div>
 
-          {/* Col 2: Business Niches */}
-          <div className="space-y-3">
-            <h5 className="font-bold text-white text-xs uppercase tracking-wider">Business Solutions</h5>
-            <ul className="space-y-2">
-              <li><a href="#businesses" className="hover:text-emerald-400 transition-colors">Medicine & Pharmacy Shop</a></li>
-              <li><a href="#businesses" className="hover:text-emerald-400 transition-colors">Gym & Fitness Club</a></li>
-              <li><a href="#businesses" className="hover:text-emerald-400 transition-colors">Grocery & Supermarket</a></li>
-              <li><a href="#businesses" className="hover:text-emerald-400 transition-colors">Electronics & Gadgets</a></li>
-              <li><a href="#businesses" className="hover:text-emerald-400 transition-colors">Restaurant & Cafe</a></li>
-              <li><a href="#businesses" className="hover:text-emerald-400 transition-colors">Salon & Beauty Care</a></li>
-            </ul>
-          </div>
-
-          {/* Col 3: Developer API */}
-          <div className="space-y-3">
-            <h5 className="font-bold text-white text-xs uppercase tracking-wider">Developer & Gateway</h5>
-            <ul className="space-y-2">
-              <li><span className="text-slate-300 font-mono">POST /api/v1/messages/send</span></li>
-              <li><span className="text-slate-300 font-mono">POST /api/v1/erp/query</span></li>
-              <li><span className="text-slate-300 font-mono">GET /api/v1/sessions/qr</span></li>
-              <li><span className="text-slate-300 font-mono">GET /api/v1/events (SSE)</span></li>
-              <li><span className="text-slate-300">HMAC-SHA256 Webhooks</span></li>
-            </ul>
-          </div>
-
           {/* Col 4: Quick Launch */}
-          <div className="space-y-3">
+          <div className="space-y-3 w-0 sm:w-1/4">
             <h5 className="font-bold text-white text-xs uppercase tracking-wider">Get Started</h5>
             <p className="text-xs text-slate-400">
               Create your business account in 60 seconds with zero credit card or Meta verification fees.

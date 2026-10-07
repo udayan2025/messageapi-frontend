@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Pill, 
   Dumbbell, 
@@ -68,6 +68,26 @@ export default function BusinessSetupWizard({
 
   // Loading / Finished state
   const [createdAccount, setCreatedAccount] = useState<BusinessAccount | null>(null);
+
+  // Reset to Step 1 and fresh form data every time wizard is opened
+  useEffect(() => {
+    if (isOpen) {
+      setStep(1);
+      setCategory(initialCategory);
+      const defaultName = getDefaultBusinessName(initialCategory);
+      setBusinessName(defaultName);
+      setOwnerName("");
+      setPhone("");
+      setEmail("");
+      setAddress("");
+      setCurrency("₹");
+      setWorkingHours("08:00 AM - 10:00 PM");
+      const t = BUSINESS_TEMPLATES[initialCategory] || BUSINESS_TEMPLATES.custom;
+      setGreetingMessage(t.defaultGreeting.replace("{BusinessName}", defaultName));
+      setAiPrompt(t.defaultPrompt.replace("{BusinessName}", defaultName));
+      setCreatedAccount(null);
+    }
+  }, [isOpen, initialCategory]);
 
   if (!isOpen) return null;
 

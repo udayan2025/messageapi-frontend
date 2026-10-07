@@ -17,7 +17,9 @@ import {
   subscribeToAccountStore, 
   getActiveAccountSnapshot, 
   getServerSnapshot,
-  setActiveAccountId 
+  setActiveAccountId,
+  logoutActiveAccount,
+  getLastStoredAccount
 } from "@/lib/storage";
 
 export default function Home() {
@@ -29,7 +31,8 @@ export default function Home() {
   );
   const [activeAccountOverride, setActiveAccountOverride] = useState<BusinessAccount | null>(null);
 
-  const activeAccount = activeAccountOverride || storedActiveAccount;
+  const activeAccount = activeAccountOverride !== null ? activeAccountOverride : storedActiveAccount;
+  const lastAccount = activeAccount || getLastStoredAccount();
 
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardCategory, setWizardCategory] = useState<BusinessCategory>("custom");
@@ -50,6 +53,25 @@ export default function Home() {
 
   const handleUpdateAccount = (updated: BusinessAccount) => {
     setActiveAccountOverride(updated);
+  };
+
+  const handleLogout = () => {
+    setActiveAccountOverride(null);
+    logoutActiveAccount();
+    setCurrentView("landing");
+    setWizardOpen(false);
+    setWizardCategory("medicine");
+  };
+
+  const handleLogin = (acc: BusinessAccount) => {
+    setActiveAccountOverride(acc);
+    setActiveAccountId(acc.id);
+    setCurrentView("workspace");
+  };
+
+  const handleActivateAccount = (acc: BusinessAccount) => {
+    setActiveAccountOverride(acc);
+    setActiveAccountId(acc.id);
   };
 
   const handleScrollToDemo = () => {
@@ -77,9 +99,13 @@ export default function Home() {
         <Navbar
           onOpenWizard={handleOpenWizard}
           activeAccount={activeAccount}
+          lastAccount={lastAccount}
           currentView={currentView}
           onGoToDashboard={() => setCurrentView("workspace")}
           onBackToLanding={() => setCurrentView("landing")}
+          onLogout={handleLogout}
+          onLogin={handleLogin}
+          onActivateAccount={handleActivateAccount}
         />
       )}
 
@@ -115,7 +141,7 @@ export default function Home() {
           <InteractiveLiveDemo onOpenWizard={(cat) => handleOpenWizard(cat)} />
 
           {/* 6. Cost Savings ROI Calculator */}
-          <RoiCalculator onOpenWizard={() => handleOpenWizard()} />
+          {/* <RoiCalculator onOpenWizard={() => handleOpenWizard()} /> */}
         </main>
       )}
 
@@ -126,6 +152,7 @@ export default function Home() {
 
       {/* 5-Step Business Setup Wizard Modal */}
       <BusinessSetupWizard
+        key={`${wizardCategory}-${wizardOpen}`}
         initialCategory={wizardCategory}
         isOpen={wizardOpen}
         onClose={() => setWizardOpen(false)}

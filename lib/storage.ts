@@ -91,34 +91,60 @@ export function subscribeToAccountStore(listener: Listener): () => void {
 }
 
 export function getActiveAccountSnapshot(): BusinessAccount | null {
-  if (typeof window === "undefined") return INITIAL_DEMO_ACCOUNTS[0];
+  if (typeof window === "undefined") return null;
   const raw = localStorage.getItem(STORAGE_KEY) || "";
-  const activeId = localStorage.getItem(ACTIVE_ACCOUNT_KEY) || "";
-  const key = `${activeId}::${raw}`;
+  const activeId = localStorage.getItem(ACTIVE_ACCOUNT_KEY);
+  if (activeId === "LOGGED_OUT") {
+    return null;
+  }
+  const key = `${activeId || ""}::${raw}`;
   if (cachedActiveAccount && lastCacheKey === key) {
     return cachedActiveAccount;
   }
   lastCacheKey = key;
   const accounts = getStoredAccounts();
-  cachedActiveAccount = accounts.find((a) => a.id === activeId) || accounts[0] || null;
+  if (accounts.length === 0) {
+    cachedActiveAccount = null;
+    return null;
+  }
+  if (activeId) {
+    cachedActiveAccount = accounts.find((a) => a.id === activeId) || null;
+  } else {
+    cachedActiveAccount = accounts[0] || null;
+  }
   return cachedActiveAccount;
 }
 
+export function logoutActiveAccount(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(ACTIVE_ACCOUNT_KEY, "LOGGED_OUT");
+    notifyListeners();
+  } catch (e) {
+    console.error("Failed to log out", e);
+  }
+}
+
+export function getLastStoredAccount(): BusinessAccount | null {
+  if (typeof window === "undefined") return null;
+  const accounts = getStoredAccounts();
+  return accounts.length > 0 ? accounts[0] : null;
+}
+
 export function getServerSnapshot(): BusinessAccount | null {
-  return INITIAL_DEMO_ACCOUNTS[0];
+  return null;
 }
 
 export function getStoredAccounts(): BusinessAccount[] {
-  if (typeof window === "undefined") return INITIAL_DEMO_ACCOUNTS;
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_DEMO_ACCOUNTS));
-      return INITIAL_DEMO_ACCOUNTS;
+      return [];
     }
     return JSON.parse(raw);
   } catch {
-    return INITIAL_DEMO_ACCOUNTS;
+    return [];
   }
 }
 
@@ -133,14 +159,15 @@ export function saveAccounts(accounts: BusinessAccount[]): void {
 }
 
 export function getActiveAccountId(): string {
-  if (typeof window === "undefined") return INITIAL_DEMO_ACCOUNTS[0].id;
+  if (typeof window === "undefined") return "";
   try {
     const active = localStorage.getItem(ACTIVE_ACCOUNT_KEY);
+    if (active === "LOGGED_OUT") return "";
     if (active) return active;
     const accounts = getStoredAccounts();
-    return accounts[0]?.id || "biz_apollo_pharma";
+    return accounts[0]?.id || "";
   } catch {
-    return "biz_apollo_pharma";
+    return "";
   }
 }
 
